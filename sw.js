@@ -1,6 +1,6 @@
 // ARA Scales service worker: keeps a full copy of the app on the phone so it opens with no signal.
 // Bump CACHE whenever any app file changes; phones pick up the new version the next time they open the app with signal.
-const CACHE = "ara-scales-v1.0.2";
+const CACHE = "ara-scales-v1.0.3";
 const APP_FILES = [
   "./",
   "./index.html",
@@ -15,7 +15,11 @@ const APP_FILES = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(APP_FILES)).then(() => self.skipWaiting()));
+  // cache: "reload" skips the phone's HTTP cache (GitHub Pages lets it keep files ~10 min),
+  // so a new version never stores a stale copy of an old file.
+  event.waitUntil(caches.open(CACHE)
+    .then((c) => c.addAll(APP_FILES.map((u) => new Request(u, { cache: "reload" }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {

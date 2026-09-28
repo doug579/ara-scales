@@ -173,7 +173,7 @@ footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2
 
 <script>
 "use strict";
-const APP_VERSION = "1.0.2";
+const APP_VERSION = "1.0.3";
 const LIST_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSLVnq1oeg6pIYy7rPoEQEHBu078i3X-RnNrkvLGY1YO2_gZlXZQ3Q_86ZbKlJY6PDGRtbr2rHB-ord/pub?gid=556617119&single=true&output=csv";
 const SPARE_ALLOWANCE_KG = 20;   // deducted for each spare after the first (same as the Android app)
 const WARNING_MARGIN_KG = 20;    // under this margin above minimum = yellow WARNING
@@ -508,7 +508,23 @@ el.weight.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preven
 
 restore();
 if ("serviceWorker" in navigator) {
-  addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+  addEventListener("load", () => {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((reg) => {
+      // check for a new version whenever the app comes back to the foreground with signal
+      document.addEventListener("visibilitychange", () => { if (!document.hidden && navigator.onLine) reg.update().catch(() => {}); });
+    }).catch(() => {});
+    // a new version has taken over: offer to reload (never automatic, so nothing typed is lost)
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadController || $("updateBar")) return;
+      const bar = document.createElement("button");
+      bar.id = "updateBar"; bar.className = "btn-primary";
+      bar.style.cssText = "position:fixed;left:16px;right:16px;width:auto;bottom:max(16px,env(safe-area-inset-bottom));z-index:20;margin:0;box-shadow:0 6px 24px rgba(0,0,0,.6)";
+      bar.textContent = "NEW VERSION READY — TAP TO UPDATE";
+      bar.addEventListener("click", () => location.reload());
+      document.body.appendChild(bar);
+    });
+  });
 }
 </script>
 </body>
