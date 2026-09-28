@@ -1,6 +1,6 @@
 // ARA Scales service worker: keeps a full copy of the app on the phone so it opens with no signal.
 // Bump CACHE whenever any app file changes; phones pick up the new version the next time they open the app with signal.
-const CACHE = "ara-scales-v1.0.1";
+const CACHE = "ara-scales-v1.0.2";
 const APP_FILES = [
   "./",
   "./index.html",
