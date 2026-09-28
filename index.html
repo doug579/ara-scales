@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ARA Scales</title>
+<meta name="description" content="American Rally Association vehicle scaling check for tech inspectors.">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="ARA Scales">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preload" href="fonts/Montserrat-Regular.woff" as="font" type="font/woff" crossorigin>
+<link rel="preload" href="fonts/Montserrat-ExtraBold.woff" as="font" type="font/woff" crossorigin>
+<style>
+@font-face { font-family: "Montserrat"; src: url("fonts/Montserrat-Regular.woff") format("woff"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Montserrat"; src: url("fonts/Montserrat-ExtraBold.woff") format("woff"); font-weight: 800; font-display: swap; }
+@font-face { font-family: "Saira Expanded"; src: url("fonts/SairaExpanded-ExtraBold.woff") format("woff"); font-weight: 800; font-display: swap; }
+
+:root {
+  /* ARA brand */
+  --black: #000000; --red: #ED1C24; --gray: #BCBEC0; --charcoal: #333333; --white: #FFFFFF;
+  /* compliance cues (kept exactly as in the Android app) */
+  --cue-green: #00FF00; --cue-yellow: #FFFF00; --cue-red: #FF0000;
+  --field: #333333; --muted: #BCBEC0;
+  --gutter: 16px; --radius: 10px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--black); color: var(--white); }
+body {
+  font-family: "Montserrat", "Segoe UI", "Helvetica Neue", sans-serif;
+  -webkit-text-size-adjust: 100%;
+  padding: max(12px, env(safe-area-inset-top)) var(--gutter) max(24px, env(safe-area-inset-bottom));
+}
+.wrap { max-width: 520px; margin: 0 auto; }
+
+header { text-align: center; }
+header img { width: 100%; max-width: 420px; height: auto; display: block; margin: 0 auto 10px; }
+h1 {
+  font-family: "Saira Expanded", "Montserrat", sans-serif; font-weight: 800;
+  font-size: 22px; letter-spacing: 0.02em; margin: 0 0 4px; text-transform: uppercase;
+}
+#currentEvent { font-weight: 800; font-size: 13px; color: var(--muted); min-height: 1.3em; }
+#listAge { font-size: 12px; color: var(--muted); min-height: 1.2em; margin-top: 2px; }
+#offline { display: none; font-weight: 800; font-size: 11px; letter-spacing: .12em; color: var(--black);
+  background: var(--gray); border-radius: 4px; padding: 2px 6px; margin-top: 6px; }
+body.is-offline #offline { display: inline-block; }
+
+.label {
+  font-weight: 800; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--muted); margin: 18px 0 6px;
+}
+.row { display: flex; gap: 8px; }
+.row > * { flex: 1 1 0; min-width: 0; }
+
+input[type=text], input[type=number], input:not([type]) {
+  width: 100%; font: inherit; font-size: 18px; color: var(--white); background: var(--field);
+  border: 2px solid transparent; border-radius: var(--radius); padding: 14px 12px; outline: none;
+  -webkit-appearance: none; appearance: none;
+}
+input::placeholder { color: var(--muted); opacity: 1; }
+input:focus { border-color: var(--gray); }
+#weight { font-size: 22px; margin-top: 8px; }
+
+button, select {
+  width: 100%; font: inherit; font-weight: 800; font-size: 15px; letter-spacing: 0.02em;
+  border: 0; border-radius: var(--radius); padding: 0 12px; min-height: 56px; cursor: pointer;
+  -webkit-appearance: none; appearance: none; touch-action: manipulation;
+}
+button:active { filter: brightness(0.85); }
+.btn-primary { background: var(--white); color: var(--black); min-height: 64px; font-size: 18px; margin-top: 14px; }
+.btn-secondary { background: var(--charcoal); color: var(--white); }
+.btn-backup { background: var(--gray); color: var(--black); min-height: 48px; font-size: 13px; }
+
+/* result box: gray until a check, then the green / yellow / red cue */
+#result {
+  margin-top: 14px; border-radius: var(--radius); background: var(--gray); color: var(--black);
+  font-weight: 800; font-size: 22px; text-align: center; padding: 18px 12px; min-height: 72px;
+  display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 4px;
+}
+#result small { font-size: 14px; font-weight: 400; }
+#result.green { background: var(--cue-green); }
+#result.yellow { background: var(--cue-yellow); }
+#result.red { background: var(--cue-red); }
+#result.notfound { background: var(--white); outline: 4px dashed var(--cue-red); outline-offset: -4px; }
+
+/* event picker: red until an event is loaded, green after */
+#eventSelect { background: var(--cue-red); color: var(--black); text-align: center; text-align-last: center; }
+#eventSelect.loaded { background: var(--cue-green); }
+
+hr { border: 0; height: 2px; background: var(--charcoal); margin: 22px 0 4px; }
+
+#log { margin-top: 12px; font-size: 14px; }
+#log summary { font-weight: 800; color: var(--muted); cursor: pointer; padding: 6px 0; }
+#log table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+#log th, #log td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--charcoal); font-variant-numeric: tabular-nums; }
+#log th { color: var(--muted); font-weight: 800; font-size: 12px; }
+#log .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+#clearLog { background: none; color: var(--muted); min-height: 40px; font-size: 13px; text-decoration: underline; margin-top: 6px; }
+
+#install {
+  display: none; margin-top: 14px; background: var(--charcoal); border-left: 4px solid var(--red);
+  border-radius: 6px; padding: 12px; font-size: 14px; line-height: 1.45;
+}
+#install b { font-weight: 800; }
+#install.show { display: block; }
+
+#toast {
+  position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(150%);
+  background: var(--white); color: var(--black); font-weight: 800; font-size: 14px; border-radius: 8px;
+  padding: 12px 16px; max-width: calc(100% - 32px); box-shadow: 0 6px 24px rgba(0,0,0,.5);
+  transition: transform .25s ease; z-index: 10; text-align: center;
+}
+#toast.show { transform: translateX(-50%) translateY(0); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="icons/ara-logo-reversed.png" alt="American Rally Association" width="1000" height="116">
+    <h1>Scaling</h1>
+    <div id="currentEvent">No event selected</div>
+    <div id="listAge"></div>
+    <div id="offline">OFFLINE</div>
+  </header>
+
+  <div id="install"></div>
+
+  <div class="label">Vehicle</div>
+  <div class="row">
+    <input id="car" inputmode="numeric" pattern="[0-9]*" placeholder="Car #" autocomplete="off" enterkeyhint="next" aria-label="Car number">
+    <input id="spares" inputmode="numeric" pattern="[0-9]*" placeholder="Spare tires" autocomplete="off" enterkeyhint="next" aria-label="Spare tires">
+  </div>
+  <input id="weight" inputmode="decimal" placeholder="Scale weight (kg)" autocomplete="off" enterkeyhint="done" aria-label="Scale weight in kg">
+  <button id="logBtn" class="btn-primary">LOG &amp; CHECK WEIGHT</button>
+  <div id="result" role="status" aria-live="polite">Result will show here</div>
+
+  <div class="row" style="margin-top:14px">
+    <button id="undoBtn" class="btn-secondary">UNDO LAST</button>
+    <button id="exportBtn" class="btn-secondary">EXPORT CSV</button>
+  </div>
+
+  <details id="log">
+    <summary id="logSummary">0 cars logged this session</summary>
+    <table><thead><tr><th>Car</th><th>Scale</th><th>Spares</th><th>Min</th><th>Result</th></tr></thead><tbody id="logBody"></tbody></table>
+    <button id="clearLog">Start a new session (clear this log)</button>
+  </details>
+
+  <hr>
+  <div class="label">Event</div>
+  <button id="downloadBtn" class="btn-secondary">DOWNLOAD ENTRY LISTS</button>
+  <div style="height:8px"></div>
+  <label for="eventSelect" class="visually-hidden">Select event</label>
+  <select id="eventSelect"><option value="">SELECT EVENT</option></select>
+  <div style="height:8px"></div>
+  <input id="eventName" placeholder="Event name" autocomplete="off" aria-label="Event name">
+  <div class="row" style="margin-top:8px">
+    <input id="location" placeholder="Location or GPS" autocomplete="off" aria-label="Location" style="flex:2 1 0">
+    <button id="gpsBtn" class="btn-secondary" style="flex:1 1 0">GET GPS</button>
+  </div>
+  <div style="height:14px"></div>
+  <button id="manualBtn" class="btn-backup">LOAD FILE MANUALLY</button>
+  <input id="fileInput" type="file" accept=".csv,text/csv,text/plain" hidden>
+
+  <footer>ARA Scales web app · <span id="ver"></span></footer>
+</div>
+<div id="toast" role="alert"></div>
+
+<script>
+"use strict";
+const APP_VERSION = "1.0.0";
+const LIST_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSLVnq1oeg6pIYy7rPoEQEHBu078i3X-RnNrkvLGY1YO2_gZlXZQ3Q_86ZbKlJY6PDGRtbr2rHB-ord/pub?gid=556617119&single=true&output=csv";
+const SPARE_ALLOWANCE_KG = 20;   // deducted for each spare after the first (same as the Android app)
+const WARNING_MARGIN_KG = 20;    // under this margin above minimum = yellow WARNING
+
+// ---------- storage (every write goes to the phone straight away) ----------
+const K = { lists: "ara.lists", listsAt: "ara.listsAt", event: "ara.event", manual: "ara.manual",
+            log: "ara.log", exported: "ara.exportedCount", location: "ara.location", eventName: "ara.eventName" };
+const store = {
+  get(k, d = null) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); return true; } catch { toast("Could not save on this phone"); return false; } },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+  json(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+};
+
+// ---------- state ----------
+let rows = [];        // [{event, start, car, kg}]
+let carDb = new Map(); // car -> kg for the selected event
+let log = store.json(K.log, []);
+
+const $ = (id) => document.getElementById(id);
+const el = {
+  car: $("car"), spares: $("spares"), weight: $("weight"), result: $("result"),
+  currentEvent: $("currentEvent"), listAge: $("listAge"), eventSelect: $("eventSelect"),
+  eventName: $("eventName"), location: $("location"), logSummary: $("logSummary"), logBody: $("logBody"),
+};
+
+function toast(msg, ms = 3200) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), ms);
+}
+
+// ---------- CSV ----------
+function parseCsv(text) {
+  text = text.replace(/^﻿/, "");
+  const out = []; let row = [], field = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+      else field += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = ""; if (row.some((f) => f.trim() !== "")) out.push(row); row = [];
+    } else field += c;
+  }
+  row.push(field); if (row.some((f) => f.trim() !== "")) out.push(row);
+  return out.map((r) => r.map((f) => f.trim()));
+}
+const csvCell = (v) => { v = String(v ?? ""); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+
+// Combined list: event,start,car,kg (with header).  Manual backup: car,kg (no header).
+function loadListsText(text) {
+  const table = parseCsv(text);
+  const parsed = [];
+  for (const r of table) {
+    if (r.length < 4 || r[0].toLowerCase() === "event") continue;
+    const car = r[2], kg = Number(r[3]);
+    if (!/^\d+$/.test(car) || !Number.isFinite(kg)) continue;
+    parsed.push({ event: r[0], start: r[1], car, kg });
+  }
+  return parsed;
+}
+
+// ---------- events ----------
+function eventNames() {
+  const seen = new Map();
+  for (const r of rows) if (!seen.has(r.event)) seen.set(r.event, r.start);
+  return [...seen.entries()].sort((a, b) => (a[1] || "").localeCompare(b[1] || "") || a[0].localeCompare(b[0]));
+}
+function fmtDate(iso) {
+  const d = new Date(iso + "T12:00:00");
+  return isNaN(d) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function fillPicker() {
+  const sel = el.eventSelect; sel.innerHTML = "";
+  const first = document.createElement("option"); first.value = ""; first.textContent = rows.length ? "SELECT EVENT" : "SELECT EVENT (download lists first)";
+  sel.appendChild(first);
+  for (const [name, start] of eventNames()) {
+    const o = document.createElement("option"); o.value = name;
+    o.textContent = o.dataset.label = start ? `${name} — ${fmtDate(start)}` : name; sel.appendChild(o);
+  }
+}
+function selectEvent(name, { quiet = false } = {}) {
+  carDb = new Map(rows.filter((r) => r.event === name).map((r) => [r.car, r.kg]));
+  if (!name || carDb.size === 0) {
+    if (name && !quiet) toast(`No cars found for ${name}`);
+    clearEvent(); return false;
+  }
+  store.set(K.event, name); store.del(K.manual);
+  // the chosen event shows its name only (no date) so long names fit the button
+  for (const o of el.eventSelect.options) if (o.value) o.textContent = o.value === name ? name : o.dataset.label;
+  el.eventSelect.value = name; el.eventSelect.classList.add("loaded");
+  el.eventName.value = name; store.set(K.eventName, name);
+  el.currentEvent.textContent = `${name} · ${carDb.size} cars`;
+  el.currentEvent.style.color = "var(--white)";
+  return true;
+}
+function clearEvent() {
+  carDb = new Map(); store.del(K.event);
+  el.eventSelect.value = ""; el.eventSelect.classList.remove("loaded");
+  el.currentEvent.textContent = "No event selected"; el.currentEvent.style.color = "";
+}
+function showListAge() {
+  const at = store.get(K.listsAt);
+  if (!at) { el.listAge.textContent = ""; return; }
+  const d = new Date(at);
+  el.listAge.textContent = "Entry lists downloaded " + d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+// ---------- download ----------
+async function download() {
+  const btn = $("downloadBtn"); btn.disabled = true; btn.textContent = "DOWNLOADING…";
+  try {
+    const res = await fetch(LIST_URL + "&t=" + Date.now(), { cache: "no-store", credentials: "omit" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const text = await res.text();
+    const parsed = loadListsText(text);
+    if (!parsed.length) throw new Error("the list is empty");
+    rows = parsed;
+    store.set(K.lists, text); store.set(K.listsAt, new Date().toISOString());
+    fillPicker(); showListAge();
+    const saved = store.get(K.event);
+    if (saved && eventNames().some(([n]) => n === saved)) { selectEvent(saved); toast(`Updated: ${saved} · ${carDb.size} cars`); }
+    else { if (!store.get(K.manual)) clearEvent(); toast(`Downloaded ${eventNames().length} event(s). Now SELECT EVENT.`); }
+  } catch (e) {
+    toast(navigator.onLine ? `Download failed (${e.message}). Your saved list is still loaded.` : "No signal. Your saved list is still loaded.", 4500);
+  } finally { btn.disabled = false; btn.textContent = "DOWNLOAD ENTRY LISTS"; }
+}
+
+// ---------- manual file (backup) ----------
+function loadManual(text, fileName) {
+  const combined = loadListsText(text);
+  if (combined.length) {        // someone picked a combined list file
+    rows = combined; store.set(K.lists, text); store.set(K.listsAt, new Date().toISOString());
+    fillPicker(); showListAge(); clearEvent(); toast("Entry lists loaded. Now SELECT EVENT."); return;
+  }
+  const pairs = parseCsv(text).filter((r) => r.length >= 2 && /^\d+$/.test(r[0]) && Number.isFinite(Number(r[1])));
+  if (!pairs.length) { toast("That file doesn't look like a scaling list."); return; }
+  carDb = new Map(pairs.map((r) => [r[0], Number(r[1])]));
+  store.set(K.manual, JSON.stringify({ name: fileName, pairs: pairs.map((r) => [r[0], Number(r[1])]) }));
+  store.del(K.event);
+  el.eventSelect.value = ""; el.eventSelect.classList.add("loaded");
+  el.currentEvent.textContent = `Manual file · ${carDb.size} cars`; el.currentEvent.style.color = "var(--white)";
+  toast(`Manual file loaded: ${carDb.size} cars`);
+}
+
+// ---------- weighing ----------
+function setResult(cls, main, sub) {
+  el.result.className = cls || "";
+  el.result.innerHTML = "";
+  const m = document.createElement("div"); m.textContent = main; el.result.appendChild(m);
+  if (sub) { const s = document.createElement("small"); s.textContent = sub; el.result.appendChild(s); }
+}
+function checkAndLog() {
+  const car = el.car.value.trim().replace(/^0+(?=\d)/, "");
+  const weight = Number(el.weight.value.replace(",", "."));
+  const spares = el.spares.value.trim() === "" ? 0 : Number(el.spares.value);
+  if (carDb.size === 0) { toast("No entry list loaded. Tap DOWNLOAD ENTRY LISTS, then SELECT EVENT."); return; }
+  if (!car) { toast("Enter the car number"); el.car.focus(); return; }
+  if (!el.weight.value.trim() || !Number.isFinite(weight) || weight <= 0) { toast("Enter the scale weight"); el.weight.focus(); return; }
+  if (!Number.isInteger(spares) || spares < 0) { toast("Spare tires must be a whole number"); el.spares.focus(); return; }
+  if (!carDb.has(car)) {
+    setResult("notfound", `CAR ${car} NOT ON LIST`, "Check this car by hand with the Chief of Tech");
+    navigator.vibrate?.([80, 60, 80]); return;
+  }
+  const target = carDb.get(car);
+  const extraSpares = spares > 1 ? spares - 1 : 0;
+  const variance = Math.round((weight - extraSpares * SPARE_ALLOWANCE_KG - target) * 10) / 10;
+  let cls, status;
+  if (variance < 0) { cls = "red"; status = `NOT COMPLIANT (-${Math.abs(variance)} kg)`; }
+  else if (variance < WARNING_MARGIN_KG) { cls = "yellow"; status = `WARNING (Margin: +${variance} kg)`; }
+  else { cls = "green"; status = "COMPLIANT"; }
+  setResult(cls, status.replace(/ \(.*/, ""), `Car ${car} · min ${target} kg · ${variance >= 0 ? "+" : ""}${variance} kg`);
+  const entry = {
+    event: el.eventName.value.trim(), location: el.location.value.trim(), car, raw: weight, spares,
+    target, status, cls, time: new Date().toISOString(),
+  };
+  log.push(entry); saveLog();
+  el.car.value = ""; el.weight.value = ""; el.spares.value = "";
+  if (cls === "red") navigator.vibrate?.([200, 100, 200]);
+}
+function saveLog() { store.set(K.log, JSON.stringify(log)); renderLog(); }
+function renderLog() {
+  const n = log.length, exported = Number(store.get(K.exported, "0"));
+  el.logSummary.textContent = `${n} car${n === 1 ? "" : "s"} logged this session` + (n && exported < n ? ` · ${n - exported} not exported` : n ? " · all exported" : "");
+  el.logBody.innerHTML = "";
+  for (const e of [...log].reverse()) {
+    const tr = document.createElement("tr");
+    const cells = [e.car, e.raw, e.spares, e.target];
+    for (const c of cells) { const td = document.createElement("td"); td.textContent = c; tr.appendChild(td); }
+    const td = document.createElement("td"); const dot = document.createElement("span"); dot.className = "dot";
+    dot.style.background = { green: "var(--cue-green)", yellow: "var(--cue-yellow)", red: "var(--cue-red)" }[e.cls] || "var(--gray)";
+    td.appendChild(dot); td.appendChild(document.createTextNode(e.status.replace(/ \(.*/, ""))); tr.appendChild(td);
+    el.logBody.appendChild(tr);
+  }
+}
+function undo() {
+  if (!log.length) { toast("Nothing to undo"); return; }
+  const last = log[log.length - 1];
+  if (!confirm(`Remove the last entry (car ${last.car}, ${last.raw} kg)?`)) return;
+  log.pop(); const ex = Number(store.get(K.exported, "0")); if (ex > log.length) store.set(K.exported, String(log.length));
+  saveLog(); setResult("", "Last entry removed"); toast("Last entry removed.");
+}
+
+// ---------- export ----------
+async function exportCsv() {
+  if (!log.length) { toast("Nothing logged yet"); return; }
+  const header = "Event,Location,Car,RawWeight,Spares,TargetWeight,Status,Time";
+  const lines = log.map((e) => [e.event, e.location, e.car, e.raw, e.spares, e.target, e.status,
+    new Date(e.time).toLocaleString()].map(csvCell).join(","));
+  const csv = header + "\r\n" + lines.join("\r\n") + "\r\n";
+  const safe = (s) => (s || "").replace(/[\\/:*?"<>|,]+/g, " ").replace(/\s+/g, "_").replace(/^_|_$/g, "");
+  const name = [safe(el.eventName.value) || "ARA_Scaling", safe(el.location.value)].filter(Boolean).join("_") + ".csv";
+  const file = new File([csv], name, { type: "text/csv" });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: name });
+    } else {
+      const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name;
+      document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+    }
+    store.set(K.exported, String(log.length)); renderLog(); toast(`Exported ${log.length} cars`);
+  } catch (e) { if (e.name !== "AbortError") toast("Export failed: " + e.message); }
+}
+function clearLog() {
+  const exported = Number(store.get(K.exported, "0"));
+  const warn = exported < log.length ? `\n\n${log.length - exported} result(s) have NOT been exported.` : "";
+  if (!log.length || !confirm("Start a new session and clear this log?" + warn)) return;
+  log = []; store.set(K.exported, "0"); saveLog(); setResult("", "Result will show here");
+}
+
+// ---------- GPS ----------
+function gps() {
+  if (!navigator.geolocation) { toast("GPS not available"); return; }
+  const btn = $("gpsBtn"); btn.textContent = "…";
+  navigator.geolocation.getCurrentPosition(
+    (p) => { el.location.value = `${p.coords.latitude.toFixed(5)},${p.coords.longitude.toFixed(5)}`; store.set(K.location, el.location.value); btn.textContent = "GET GPS"; },
+    (e) => { toast("GPS failed: " + e.message); btn.textContent = "GET GPS"; },
+    { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+}
+
+// ---------- install hint (Home Screen apps keep their data on iPhone) ----------
+function installHint() {
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  if (standalone) return;
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const box = $("install");
+  box.innerHTML = ios
+    ? "<b>Install for offline use:</b> in Safari tap <b>Share</b> → <b>Add to Home Screen</b>, then always open ARA Scales from that icon. Your list and results are only kept safely when it runs from the Home Screen."
+    : "<b>Install for offline use:</b> in Chrome tap <b>⋮</b> → <b>Install app</b> (or Add to Home screen), then open ARA Scales from that icon.";
+  box.classList.add("show");
+}
+
+// ---------- start-up: restore everything from the phone ----------
+function restore() {
+  $("ver").textContent = "v" + APP_VERSION;
+  const text = store.get(K.lists);
+  if (text) rows = loadListsText(text);
+  fillPicker(); showListAge();
+  const manual = store.json(K.manual, null);
+  const saved = store.get(K.event);
+  if (manual && manual.pairs?.length) {
+    carDb = new Map(manual.pairs); el.eventSelect.classList.add("loaded");
+    el.currentEvent.textContent = `Manual file · ${carDb.size} cars`; el.currentEvent.style.color = "var(--white)";
+  } else if (saved) selectEvent(saved, { quiet: true });
+  const en = store.get(K.eventName); if (en) el.eventName.value = en;
+  const loc = store.get(K.location); if (loc) el.location.value = loc;
+  renderLog();
+  installHint();
+  const net = () => document.body.classList.toggle("is-offline", !navigator.onLine);
+  addEventListener("online", net); addEventListener("offline", net); net();
+  navigator.storage?.persist?.().catch(() => {});
+}
+
+// ---------- wire up ----------
+$("logBtn").addEventListener("click", checkAndLog);
+$("undoBtn").addEventListener("click", undo);
+$("exportBtn").addEventListener("click", exportCsv);
+$("clearLog").addEventListener("click", clearLog);
+$("downloadBtn").addEventListener("click", download);
+$("gpsBtn").addEventListener("click", gps);
+$("manualBtn").addEventListener("click", () => $("fileInput").click());
+$("fileInput").addEventListener("change", async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  loadManual(await f.text(), f.name); e.target.value = "";
+});
+el.eventSelect.addEventListener("change", () => {
+  if (el.eventSelect.value) { if (selectEvent(el.eventSelect.value)) toast(`${el.eventSelect.value}: ${carDb.size} cars loaded`); }
+});
+el.eventName.addEventListener("input", () => store.set(K.eventName, el.eventName.value));
+el.location.addEventListener("input", () => store.set(K.location, el.location.value));
+el.car.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.spares.focus(); } });
+el.spares.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.weight.focus(); } });
+el.weight.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.weight.blur(); checkAndLog(); } });
+
+restore();
+if ("serviceWorker" in navigator) {
+  addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+</script>
+</body>
+</html>
