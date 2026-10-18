@@ -82,6 +82,7 @@ button:active { filter: brightness(0.85); }
   display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 4px;
 }
 #result small { font-size: 14px; font-weight: 400; }
+#result .car-line { font-size: 30px; line-height: 1.1; letter-spacing: 0.02em; }
 #result.green { background: var(--cue-green); }
 #result.yellow { background: var(--cue-yellow); }
 #result.red { background: var(--cue-red); }
@@ -178,7 +179,7 @@ footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2
 
 <script>
 "use strict";
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.1";
 const LIST_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSLVnq1oeg6pIYy7rPoEQEHBu078i3X-RnNrkvLGY1YO2_gZlXZQ3Q_86ZbKlJY6PDGRtbr2rHB-ord/pub?gid=556617119&single=true&output=csv";
 const SPARE_ALLOWANCE_KG = 20;   // deducted for each spare after the first (same as the Android app)
 const WARNING_MARGIN_KG = 20;    // under this margin above minimum = yellow WARNING
@@ -328,9 +329,10 @@ function loadManual(text, fileName) {
 }
 
 // ---------- weighing ----------
-function setResult(cls, main, sub) {
+function setResult(cls, main, sub, car) {
   el.result.className = cls || "";
   el.result.innerHTML = "";
+  if (car) { const c = document.createElement("div"); c.className = "car-line"; c.textContent = `CAR ${car}`; el.result.appendChild(c); }
   const m = document.createElement("div"); m.textContent = main; el.result.appendChild(m);
   if (sub) { const s = document.createElement("small"); s.textContent = sub; el.result.appendChild(s); }
 }
@@ -353,7 +355,7 @@ function checkAndLog() {
   if (variance < 0) { cls = "red"; status = `NOT COMPLIANT (-${Math.abs(variance)} kg)`; }
   else if (variance < WARNING_MARGIN_KG) { cls = "yellow"; status = `WARNING (Margin: +${variance} kg)`; }
   else { cls = "green"; status = "COMPLIANT"; }
-  setResult(cls, status.replace(/ \(.*/, ""), `Car ${car} · min ${target} kg · ${variance >= 0 ? "+" : ""}${variance} kg`);
+  setResult(cls, status.replace(/ \(.*/, ""), `min ${target} kg · ${variance >= 0 ? "+" : ""}${variance} kg · scale ${weight} kg`, car);
   const entry = {
     event: el.eventName.value.trim(), location: el.location.value.trim(), car, raw: weight, spares,
     target, status, cls, time: new Date().toISOString(),
