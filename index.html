@@ -112,6 +112,15 @@ hr { border: 0; height: 2px; background: var(--charcoal); margin: 22px 0 4px; }
 #install b { font-weight: 800; }
 #install.show { display: block; }
 
+#ask { position: fixed; inset: 0; background: rgba(0,0,0,.75); display: none; align-items: center; justify-content: center;
+  padding: 16px; z-index: 30; }
+#ask.show { display: flex; }
+#ask .box { background: var(--charcoal); border-top: 4px solid var(--red); border-radius: var(--radius); padding: 18px 16px 16px;
+  width: 100%; max-width: 420px; }
+#ask p { margin: 0 0 16px; font-size: 17px; line-height: 1.4; white-space: pre-line; }
+#ask .row button { min-height: 52px; }
+#askNo { background: var(--black); color: var(--white); border: 2px solid var(--gray); }
+#askYes { background: var(--white); color: var(--black); }
 #toast {
   position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(150%);
   background: var(--white); color: var(--black); font-weight: 800; font-size: 14px; border-radius: 8px;
@@ -176,10 +185,14 @@ footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2
   <footer>ARA Scales web app · <span id="ver"></span></footer>
 </div>
 <div id="toast" role="alert"></div>
+<div id="ask" role="dialog" aria-modal="true" aria-labelledby="askText">
+  <div class="box"><p id="askText"></p>
+    <div class="row"><button id="askNo">CANCEL</button><button id="askYes">YES</button></div></div>
+</div>
 
 <script>
 "use strict";
-const APP_VERSION = "1.1.1";
+const APP_VERSION = "1.1.2";
 const LIST_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSLVnq1oeg6pIYy7rPoEQEHBu078i3X-RnNrkvLGY1YO2_gZlXZQ3Q_86ZbKlJY6PDGRtbr2rHB-ord/pub?gid=556617119&single=true&output=csv";
 const SPARE_ALLOWANCE_KG = 20;   // deducted for each spare after the first (same as the Android app)
 const WARNING_MARGIN_KG = 20;    // under this margin above minimum = yellow WARNING
@@ -328,6 +341,16 @@ function loadManual(text, fileName) {
   toast(`Manual file loaded: ${carDb.size} cars`);
 }
 
+// ---------- in-app confirmation (replaces the browser's "site says…" box; works offline) ----------
+function ask(text, yes = "YES") {
+  return new Promise((resolve) => {
+    const box = $("ask"), y = $("askYes"), n = $("askNo");
+    $("askText").textContent = text; y.textContent = yes; box.classList.add("show");
+    const done = (v) => { box.classList.remove("show"); y.onclick = n.onclick = null; resolve(v); };
+    y.onclick = () => done(true); n.onclick = () => done(false);
+  });
+}
+
 // ---------- weighing ----------
 function setResult(cls, main, sub, car) {
   el.result.className = cls || "";
@@ -386,11 +409,12 @@ function renderLog() {
     el.logBody.appendChild(tr);
   }
 }
-function undo() {
+async function undo() {
   loadLog();
   if (!log.length) { toast("Nothing to undo"); return; }
   const last = log[log.length - 1];
-  if (!confirm(`Remove the last entry (car ${last.car}, ${last.raw} kg)?`)) return;
+  if (!(await ask(`Remove the last entry?\n\nCar ${last.car} · ${last.raw} kg · ${last.status.replace(/ \(.*/, "")}`, "REMOVE"))) return;
+  loadLog(); if (!log.length || log[log.length - 1].time !== last.time) return;
   log.pop(); const ex = Number(store.get(K.exported, "0")); if (ex > log.length) store.set(K.exported, String(log.length));
   saveLog(); setResult("", "Last entry removed"); toast("Last entry removed.");
 }
@@ -416,17 +440,18 @@ async function exportCsv() {
     store.set(K.exported, String(log.length)); renderLog(); toast(`Exported ${log.length} cars`);
   } catch (e) { if (e.name !== "AbortError") toast("Export failed: " + e.message); }
 }
-function clearLog() {
+async function clearLog() {
   loadLog();
   const exported = Number(store.get(K.exported, "0"));
   const warn = exported < log.length ? `\n\n${log.length - exported} result(s) have NOT been exported.` : "";
-  if (!log.length || !confirm("Start a new session and clear this log?" + warn)) return;
+  if (!log.length || !(await ask("Start a new session and clear this log?" + warn, "CLEAR LOG"))) return;
+  loadLog();
   store.set(K.logPrev, JSON.stringify(log));   // last cleared session kept as a safety copy
   log = []; store.set(K.exported, "0"); saveLog(); setResult("", "Result will show here");
 }
 
 // ---------- restore a session from an exported CSV ----------
-function restoreFromCsv(text) {
+async function restoreFromCsv(text) {
   const table = parseCsv(text);
   if (!table.length || table[0][0] !== "Event" || table[0][2] !== "Car") { toast("That isn't an ARA Scales export file."); return; }
   const entries = [];
@@ -439,7 +464,8 @@ function restoreFromCsv(text) {
   }
   if (!entries.length) { toast("No logged cars found in that file."); return; }
   loadLog();
-  if (log.length && !confirm(`Replace the ${log.length} car(s) logged now with the ${entries.length} car(s) in this file?`)) return;
+  if (log.length && !(await ask(`Replace the ${log.length} car(s) logged now with the ${entries.length} car(s) in this file?`, "REPLACE"))) return;
+  loadLog();
   if (log.length) store.set(K.logPrev, JSON.stringify(log));
   log = entries; store.set(K.exported, String(entries.length)); saveLog();
   toast(`Restored ${entries.length} cars`);
@@ -531,7 +557,7 @@ $("clearLog").addEventListener("click", clearLog);
 $("restoreBtn").addEventListener("click", () => $("restoreInput").click());
 $("restoreInput").addEventListener("change", async (e) => {
   const f = e.target.files[0]; if (!f) return;
-  restoreFromCsv(await f.text()); e.target.value = "";
+  await restoreFromCsv(await f.text()); e.target.value = "";
 });
 // refresh from the phone's storage whenever the app comes back to the front or another copy changes it
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { loadLog(); renderLog(); } });
