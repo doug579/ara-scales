@@ -100,6 +100,8 @@ hr { border: 0; height: 2px; background: var(--charcoal); margin: 22px 0 4px; }
 #log summary #logUnexported { color: #FF5F00; }   /* ARA Orange highlight */
 #syncStatus { display: block; font-size: 13px; font-weight: 400; color: var(--muted); margin-top: 4px; }
 #syncStatus.waiting { color: #FF5F00; font-weight: 800; }
+#syncStatus.ok { color: var(--white); }
+#csvStatus { display: block; font-size: 12px; font-weight: 400; color: var(--muted); margin-top: 2px; }
 #log[open] summary { border-radius: var(--radius) var(--radius) 0 0; }
 #log table { width: 100%; border-collapse: collapse; margin-top: 6px; }
 #log th, #log td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--charcoal); font-variant-numeric: tabular-nums; }
@@ -161,7 +163,7 @@ footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2
   </div>
 
   <details id="log">
-    <summary id="logSummary"><span id="logCount">0 cars logged this session</span><span id="logUnexported"></span><span id="syncStatus"></span></summary>
+    <summary id="logSummary"><span id="logCount">0 cars logged this session</span><span id="logUnexported"></span><span id="syncStatus"></span><span id="csvStatus"></span></summary>
     <table><thead><tr><th>Car</th><th>Scale</th><th>Spares</th><th>Min</th><th>Result</th></tr></thead><tbody id="logBody"></tbody></table>
     <button id="restoreBtn" class="btn-secondary" style="margin-top:10px;min-height:48px;font-size:14px">RESTORE SESSION FROM A SAVED CSV</button>
     <input id="restoreInput" type="file" accept=".csv,text/csv,text/plain" hidden>
@@ -196,7 +198,7 @@ footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2
 
 <script>
 "use strict";
-const APP_VERSION = "1.2.1";
+const APP_VERSION = "1.2.2";
 // Results upload (Google Apps Script web app on the "ARA Scales Results" sheet). Empty = upload off.
 const SYNC_URL = "https://script.google.com/macros/s/AKfycbxD2KTATyKE-RFp7AO-Vr4Wjqt_yTKUuuQjNrsJoGOXF69lr8Ow3SdrYFbcBuA_ZbTqmg/exec";
 const SYNC_KEY = "ara-Wr7anc-eLnj3NmARg3vUutPP";
@@ -395,7 +397,9 @@ function checkAndLog() {
   loadLog(); log.push(entry); saveLog();
   queueUpload({ action: "log", id: entry.id, entry });
   const unexported = log.length - Number(store.get(K.exported, "0"));
-  if (unexported > 0 && unexported % 10 === 0) setTimeout(() => toast(`${unexported} cars not exported yet. Tap EXPORT CSV to save a copy.`, 5000), 1200);
+  const waiting = loadOutbox().filter((it) => it.action === "log").length;
+  if (!SYNC_URL && unexported > 0 && unexported % 10 === 0) setTimeout(() => toast(`${unexported} cars not exported yet. Tap EXPORT CSV to save a copy.`, 5000), 1200);
+  if (SYNC_URL && waiting >= 10 && waiting % 10 === 0) setTimeout(() => toast(`${waiting} results waiting to upload (no signal). Tap EXPORT CSV for a backup copy.`, 5000), 1200);
   el.car.value = ""; el.weight.value = ""; el.spares.value = "";
   if (cls === "red") navigator.vibrate?.([200, 100, 200]);
 }
@@ -406,8 +410,14 @@ function saveLog() { store.set(K.log, JSON.stringify(log)); renderLog(); }
 function renderLog() {
   const n = log.length, exported = Number(store.get(K.exported, "0"));
   $("logCount").textContent = `${n} car${n === 1 ? "" : "s"} logged this session`;
-  $("logUnexported").textContent = n && exported < n ? ` · ${n - exported} not exported` : "";
-  if (n && exported >= n) $("logCount").textContent += " · all exported";
+  if (SYNC_URL) {
+    $("logUnexported").textContent = "";
+    $("csvStatus").textContent = !n ? "" : exported >= n ? "CSV backup: all exported" : `CSV backup: ${n - exported} not exported (optional)`;
+  } else {
+    $("logUnexported").textContent = n && exported < n ? ` · ${n - exported} not exported` : "";
+    if (n && exported >= n) $("logCount").textContent += " · all exported";
+  }
+  if (typeof renderSync === "function") renderSync();
   el.logBody.innerHTML = "";
   for (const e of [...log].reverse()) {
     const tr = document.createElement("tr");
@@ -474,9 +484,10 @@ function renderSync() {
   const el2 = $("syncStatus");
   if (!SYNC_URL) { el2.textContent = ""; return; }
   const n = loadOutbox().filter((it) => it.action === "log").length;
-  el2.className = n ? "waiting" : "";
+  el2.className = n ? "waiting" : (log.length ? "ok" : "");
   el2.textContent = n ? `${n} result${n === 1 ? "" : "s"} waiting to upload${navigator.onLine ? (syncing ? " · uploading…" : "") : " · no signal"}`
-    : (loadOutbox().length ? "Uploading…" : "Results sheet: all uploaded");
+    : loadOutbox().length ? "Uploading…"
+    : log.length ? `✓ Uploaded to the results sheet (${log.length === 1 ? "1 car" : "all " + log.length + " cars"})` : "";
   if (!n && !el.inspector.value.trim() && log.length) el2.textContent += " · add your name under EVENT";
 }
 
