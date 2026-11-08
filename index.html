@@ -98,6 +98,8 @@ hr { border: 0; height: 2px; background: var(--charcoal); margin: 22px 0 4px; }
 #log summary { font-weight: 800; font-size: 16px; color: var(--white); cursor: pointer; padding: 12px 14px;
   background: var(--charcoal); border-radius: var(--radius); list-style-position: inside; }
 #log summary #logUnexported { color: #FF5F00; }   /* ARA Orange highlight */
+#syncStatus { display: block; font-size: 13px; font-weight: 400; color: var(--muted); margin-top: 4px; }
+#syncStatus.waiting { color: #FF5F00; font-weight: 800; }
 #log[open] summary { border-radius: var(--radius) var(--radius) 0 0; }
 #log table { width: 100%; border-collapse: collapse; margin-top: 6px; }
 #log th, #log td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--charcoal); font-variant-numeric: tabular-nums; }
@@ -159,7 +161,7 @@ footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2
   </div>
 
   <details id="log">
-    <summary id="logSummary"><span id="logCount">0 cars logged this session</span><span id="logUnexported"></span></summary>
+    <summary id="logSummary"><span id="logCount">0 cars logged this session</span><span id="logUnexported"></span><span id="syncStatus"></span></summary>
     <table><thead><tr><th>Car</th><th>Scale</th><th>Spares</th><th>Min</th><th>Result</th></tr></thead><tbody id="logBody"></tbody></table>
     <button id="restoreBtn" class="btn-secondary" style="margin-top:10px;min-height:48px;font-size:14px">RESTORE SESSION FROM A SAVED CSV</button>
     <input id="restoreInput" type="file" accept=".csv,text/csv,text/plain" hidden>
@@ -174,6 +176,8 @@ footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2
   <select id="eventSelect"><option value="">SELECT EVENT</option></select>
   <div style="height:8px"></div>
   <input id="eventName" placeholder="Event name" autocomplete="off" aria-label="Event name">
+  <div style="height:8px"></div>
+  <input id="inspector" placeholder="Your name (inspector)" autocomplete="name" aria-label="Inspector name">
   <div class="row" style="margin-top:8px">
     <input id="location" placeholder="Location or GPS" autocomplete="off" aria-label="Location" style="flex:2 1 0">
     <button id="gpsBtn" class="btn-secondary" style="flex:1 1 0">GET GPS</button>
@@ -192,14 +196,18 @@ footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2
 
 <script>
 "use strict";
-const APP_VERSION = "1.1.2";
+const APP_VERSION = "1.2.0";
+// Results upload (Google Apps Script web app on the "ARA Scales Results" sheet). Empty = upload off.
+const SYNC_URL = "";
+const SYNC_KEY = "ara-Wr7anc-eLnj3NmARg3vUutPP";
 const LIST_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSLVnq1oeg6pIYy7rPoEQEHBu078i3X-RnNrkvLGY1YO2_gZlXZQ3Q_86ZbKlJY6PDGRtbr2rHB-ord/pub?gid=556617119&single=true&output=csv";
 const SPARE_ALLOWANCE_KG = 20;   // deducted for each spare after the first (same as the Android app)
 const WARNING_MARGIN_KG = 20;    // under this margin above minimum = yellow WARNING
 
 // ---------- storage (every write goes to the phone straight away) ----------
 const K = { lists: "ara.lists", listsAt: "ara.listsAt", event: "ara.event", manual: "ara.manual",
-            log: "ara.log", logPrev: "ara.log.prev", exported: "ara.exportedCount", location: "ara.location", eventName: "ara.eventName" };
+            log: "ara.log", logPrev: "ara.log.prev", exported: "ara.exportedCount", location: "ara.location", eventName: "ara.eventName",
+            outbox: "ara.outbox", inspector: "ara.inspector", syncedAt: "ara.syncedAt" };
 const store = {
   get(k, d = null) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); return true; } catch { toast("Could not save on this phone"); return false; } },
@@ -216,7 +224,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   car: $("car"), spares: $("spares"), weight: $("weight"), result: $("result"),
   currentEvent: $("currentEvent"), listAge: $("listAge"), eventSelect: $("eventSelect"),
-  eventName: $("eventName"), location: $("location"), logSummary: $("logSummary"), logBody: $("logBody"),
+  eventName: $("eventName"), location: $("location"), inspector: $("inspector"), logSummary: $("logSummary"), logBody: $("logBody"),
 };
 
 function toast(msg, ms = 3200) {
@@ -382,8 +390,10 @@ function checkAndLog() {
   const entry = {
     event: el.eventName.value.trim(), location: el.location.value.trim(), car, raw: weight, spares,
     target, status, cls, time: new Date().toISOString(),
+    id: newId(), inspector: el.inspector.value.trim(), margin: variance,
   };
   loadLog(); log.push(entry); saveLog();
+  queueUpload({ action: "log", id: entry.id, entry });
   const unexported = log.length - Number(store.get(K.exported, "0"));
   if (unexported > 0 && unexported % 10 === 0) setTimeout(() => toast(`${unexported} cars not exported yet. Tap EXPORT CSV to save a copy.`, 5000), 1200);
   el.car.value = ""; el.weight.value = ""; el.spares.value = "";
@@ -417,15 +427,66 @@ async function undo() {
   loadLog(); if (!log.length || log[log.length - 1].time !== last.time) return;
   log.pop(); const ex = Number(store.get(K.exported, "0")); if (ex > log.length) store.set(K.exported, String(log.length));
   saveLog(); setResult("", "Last entry removed"); toast("Last entry removed.");
+  if (last.id) {
+    const box = loadOutbox(), i = box.findIndex((it) => it.action === "log" && it.id === last.id);
+    if (i >= 0) { box.splice(i, 1); saveOutbox(box); renderSync(); }   // never uploaded: nothing to undo on the sheet
+    else queueUpload({ action: "undo", id: last.id });                // already on the sheet: mark it UNDONE
+  }
+}
+
+// ---------- upload results to the Google Sheet (when there is signal) ----------
+// Every change goes into an outbox on the phone first; the outbox is sent whenever there is signal and
+// only cleared for items the sheet confirms. The sheet ignores an ID it already has, so a resend is harmless.
+function newId() { return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10); }
+function loadOutbox() { const v = store.json(K.outbox, []); return Array.isArray(v) ? v : []; }
+function saveOutbox(box) { store.set(K.outbox, JSON.stringify(box)); }
+function queueUpload(item) {
+  if (!SYNC_URL) return;
+  const box = loadOutbox(); box.push(item); saveOutbox(box); renderSync(); syncNow();
+}
+let syncing = false;
+async function syncNow() {
+  if (!SYNC_URL || syncing || !navigator.onLine) { renderSync(); return; }
+  let box = loadOutbox();
+  if (!box.length) { renderSync(); return; }
+  syncing = true; renderSync();
+  try {
+    while (box.length) {
+      const batch = box.slice(0, 100);
+      const res = await fetch(SYNC_URL, {
+        method: "POST", redirect: "follow", credentials: "omit", cache: "no-store",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },   // plain text avoids a CORS preflight
+        body: JSON.stringify({ key: SYNC_KEY, version: APP_VERSION, items: batch }),
+      });
+      const out = await res.json();
+      if (!out || !out.ok) throw new Error((out && out.error) || "HTTP " + res.status);
+      const done = new Set(out.done || []);
+      // re-read in case another copy of the app added items meanwhile; remove only what the sheet confirmed
+      box = loadOutbox().filter((it) => !(done.has(it.id) && batch.some((b) => b.id === it.id && b.action === it.action)));
+      saveOutbox(box); store.set(K.syncedAt, new Date().toISOString());
+      if (!done.size) break;
+    }
+  } catch (e) {
+    console.warn("upload failed", e);   // stays in the outbox; tried again later
+  } finally { syncing = false; renderSync(); }
+}
+function renderSync() {
+  const el2 = $("syncStatus");
+  if (!SYNC_URL) { el2.textContent = ""; return; }
+  const n = loadOutbox().filter((it) => it.action === "log").length;
+  el2.className = n ? "waiting" : "";
+  el2.textContent = n ? `${n} result${n === 1 ? "" : "s"} waiting to upload${navigator.onLine ? (syncing ? " · uploading…" : "") : " · no signal"}`
+    : (loadOutbox().length ? "Uploading…" : "Results sheet: all uploaded");
+  if (!n && !el.inspector.value.trim() && log.length) el2.textContent += " · add your name under EVENT";
 }
 
 // ---------- export ----------
 async function exportCsv() {
   loadLog();
   if (!log.length) { toast("Nothing logged yet"); return; }
-  const header = "Event,Location,Car,RawWeight,Spares,TargetWeight,Status,Time";
+  const header = "Event,Location,Car,RawWeight,Spares,TargetWeight,Status,Time,Inspector";
   const lines = log.map((e) => [e.event, e.location, e.car, e.raw, e.spares, e.target, e.status,
-    new Date(e.time).toLocaleString()].map(csvCell).join(","));
+    new Date(e.time).toLocaleString(), e.inspector || ""].map(csvCell).join(","));
   const csv = header + "\r\n" + lines.join("\r\n") + "\r\n";
   const safe = (s) => (s || "").replace(/[\\/:*?"<>|,]+/g, " ").replace(/\s+/g, "_").replace(/^_|_$/g, "");
   const name = [safe(el.eventName.value) || "ARA_Scaling", safe(el.location.value)].filter(Boolean).join("_") + ".csv";
@@ -460,7 +521,7 @@ async function restoreFromCsv(text) {
     const status = r[6], cls = /^NOT COMPLIANT/.test(status) ? "red" : /^WARNING/.test(status) ? "yellow" : /^COMPLIANT/.test(status) ? "green" : "";
     const t = r[7] ? new Date(r[7]) : new Date();
     entries.push({ event: r[0], location: r[1], car: r[2], raw: Number(r[3]), spares: Number(r[4]), target: Number(r[5]),
-      status, cls, time: isNaN(t) ? new Date().toISOString() : t.toISOString() });
+      status, cls, time: isNaN(t) ? new Date().toISOString() : t.toISOString(), inspector: r[8] || "", id: newId(), restored: true });
   }
   if (!entries.length) { toast("No logged cars found in that file."); return; }
   loadLog();
@@ -542,10 +603,12 @@ function restore() {
   } else if (saved) selectEvent(saved, { quiet: true });
   const en = store.get(K.eventName); if (en) el.eventName.value = en;
   const loc = store.get(K.location); if (loc) el.location.value = loc;
-  renderLog();
+  const insp = store.get(K.inspector); if (insp) el.inspector.value = insp;
+  renderLog(); renderSync();
   installHint();
   const net = () => document.body.classList.toggle("is-offline", !navigator.onLine);
-  addEventListener("online", net); addEventListener("offline", net); net();
+  addEventListener("online", () => { net(); syncNow(); }); addEventListener("offline", () => { net(); renderSync(); }); net();
+  syncNow(); setInterval(() => { if (loadOutbox().length) syncNow(); }, 60000);
   navigator.storage?.persist?.().catch(() => {});
 }
 
@@ -560,7 +623,7 @@ $("restoreInput").addEventListener("change", async (e) => {
   await restoreFromCsv(await f.text()); e.target.value = "";
 });
 // refresh from the phone's storage whenever the app comes back to the front or another copy changes it
-document.addEventListener("visibilitychange", () => { if (!document.hidden) { loadLog(); renderLog(); } });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { loadLog(); renderLog(); syncNow(); } });
 addEventListener("pageshow", () => { loadLog(); renderLog(); });
 addEventListener("storage", (e) => { if (e.key === K.log || e.key === K.exported) { loadLog(); renderLog(); } });
 $("downloadBtn").addEventListener("click", download);
@@ -575,6 +638,7 @@ el.eventSelect.addEventListener("change", () => {
 });
 el.eventName.addEventListener("input", () => store.set(K.eventName, el.eventName.value));
 el.location.addEventListener("input", () => store.set(K.location, el.location.value));
+el.inspector.addEventListener("input", () => { store.set(K.inspector, el.inspector.value); renderSync(); });
 el.car.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.spares.focus(); } });
 el.spares.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.weight.focus(); } });
 el.weight.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.weight.blur(); checkAndLog(); } });
