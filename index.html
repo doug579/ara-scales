@@ -199,7 +199,7 @@ footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2
 
 <script>
 "use strict";
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.3.1";
 // Results upload (Google Apps Script web app on the "ARA Scales Results" sheet). Empty = upload off.
 const SYNC_URL = "https://script.google.com/macros/s/AKfycbxD2KTATyKE-RFp7AO-Vr4Wjqt_yTKUuuQjNrsJoGOXF69lr8Ow3SdrYFbcBuA_ZbTqmg/exec";
 const SYNC_KEY = "ara-Wr7anc-eLnj3NmARg3vUutPP";
@@ -408,9 +408,11 @@ async function doCheckAndLog() {
   if (weight < WEIGHT_MIN_KG || weight > WEIGHT_MAX_KG) {
     if (!(await ask(`Car ${car}: scale weight ${weight} kg looks wrong (expected ${WEIGHT_MIN_KG} to ${WEIGHT_MAX_KG} kg).\n\nLog it anyway?`, "LOG IT"))) { el.weight.focus(); return; }
   }
-  // same car already weighed for this event: double tap, wrong number, or a real re-weigh
+  // same car already weighed for this event at this location: double tap, wrong number, or a real re-weigh.
+  // A different location is a separate scaling session (cars can be weighed several times in an event), so no question.
   loadLog();
-  const prev = [...log].reverse().find((e) => e.car === car && (e.event || "") === eventName);
+  const sameText = (a, b) => (a || "").trim().toLowerCase() === (b || "").trim().toLowerCase();
+  const prev = [...log].reverse().find((e) => e.car === car && (e.event || "") === eventName && sameText(e.location, el.location.value));
   if (prev) {
     const at = new Date(prev.time), when = isNaN(at) ? "" : " at " + at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
     if (!(await ask(`Car ${car} was already logged${when}:\n${prev.raw} kg · ${shortStatus(prev.status)}\n\nLog this as a re-weigh?`, "LOG RE-WEIGH"))) { el.car.focus(); return; }
