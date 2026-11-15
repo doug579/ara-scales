@@ -63,6 +63,7 @@ input[type=text], input[type=number], input:not([type]) {
 }
 input::placeholder { color: var(--muted); opacity: 1; }
 input:focus { border-color: var(--gray); }
+input[readonly] { color: var(--muted); }
 #weight { font-size: 22px; margin-top: 8px; }
 
 button, select {
@@ -198,13 +199,14 @@ footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2
 
 <script>
 "use strict";
-const APP_VERSION = "1.2.2";
+const APP_VERSION = "1.3.0";
 // Results upload (Google Apps Script web app on the "ARA Scales Results" sheet). Empty = upload off.
 const SYNC_URL = "https://script.google.com/macros/s/AKfycbxD2KTATyKE-RFp7AO-Vr4Wjqt_yTKUuuQjNrsJoGOXF69lr8Ow3SdrYFbcBuA_ZbTqmg/exec";
 const SYNC_KEY = "ara-Wr7anc-eLnj3NmARg3vUutPP";
 const LIST_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSLVnq1oeg6pIYy7rPoEQEHBu078i3X-RnNrkvLGY1YO2_gZlXZQ3Q_86ZbKlJY6PDGRtbr2rHB-ord/pub?gid=556617119&single=true&output=csv";
 const SPARE_ALLOWANCE_KG = 20;   // deducted for each spare after the first (same as the Android app)
 const WARNING_MARGIN_KG = 20;    // under this margin above minimum = yellow WARNING
+const WEIGHT_MIN_KG = 600, WEIGHT_MAX_KG = 2500;   // outside this range the app asks before logging (typing slips)
 
 // ---------- storage (every write goes to the phone straight away) ----------
 const K = { lists: "ara.lists", listsAt: "ara.listsAt", event: "ara.event", manual: "ara.manual",
@@ -297,15 +299,26 @@ function selectEvent(name, { quiet = false } = {}) {
   // the chosen event shows its name only (no date) so long names fit the button
   for (const o of el.eventSelect.options) if (o.value) o.textContent = o.value === name ? name : o.dataset.label;
   el.eventSelect.value = name; el.eventSelect.classList.add("loaded");
-  el.eventName.value = name; store.set(K.eventName, name);
+  el.eventName.value = name; el.eventName.readOnly = true; store.set(K.eventName, name);
   el.currentEvent.textContent = `${name} · ${carDb.size} cars`;
   el.currentEvent.style.color = "var(--white)";
   return true;
 }
 function clearEvent() {
-  carDb = new Map(); store.del(K.event);
+  carDb = new Map(); store.del(K.event); el.eventName.readOnly = false;
   el.eventSelect.value = ""; el.eventSelect.classList.remove("loaded");
   el.currentEvent.textContent = "No event selected"; el.currentEvent.style.color = "";
+}
+// Results are tagged with the selected event. Only a manually loaded file uses the typed event name.
+function currentEventName() { return store.get(K.event) || el.eventName.value.trim(); }
+// Ask before changing event while the log still holds cars from a different one.
+async function okToSwitch(newName) {
+  loadLog();
+  const others = log.filter((e) => (e.event || "") !== newName);
+  if (!others.length) return true;
+  const from = others[others.length - 1].event;
+  return ask(`The log has ${others.length} car${others.length === 1 ? "" : "s"} from ${from ? `"${from}"` : "another event"}. `
+    + `They stay in the log under that event name.\n\nSwitch to "${newName}"?`, "SWITCH EVENT");
 }
 function showListAge() {
   const at = store.get(K.listsAt);
@@ -335,7 +348,7 @@ async function download() {
 }
 
 // ---------- manual file (backup) ----------
-function loadManual(text, fileName) {
+async function loadManual(text, fileName) {
   const combined = loadListsText(text);
   if (combined.length) {        // someone picked a combined list file
     rows = combined; store.set(K.lists, text); store.set(K.listsAt, new Date().toISOString());
@@ -343,12 +356,17 @@ function loadManual(text, fileName) {
   }
   const pairs = parseCsv(text).filter((r) => r.length >= 2 && /^\d+$/.test(r[0]) && Number.isFinite(Number(r[1])));
   if (!pairs.length) { toast("That file doesn't look like a scaling list."); return; }
+  // event name from the file name: "Show-Me Rally - scaling - 2026-11-07.csv" -> "Show-Me Rally"
+  const name = (fileName || "").replace(/\.[^.]+$/, "").replace(/\s*-\s*scaling\b.*$/i, "").trim();
+  if (!(await okToSwitch(name))) return;
   carDb = new Map(pairs.map((r) => [r[0], Number(r[1])]));
   store.set(K.manual, JSON.stringify({ name: fileName, pairs: pairs.map((r) => [r[0], Number(r[1])]) }));
   store.del(K.event);
+  for (const o of el.eventSelect.options) if (o.value) o.textContent = o.dataset.label;
   el.eventSelect.value = ""; el.eventSelect.classList.add("loaded");
+  el.eventName.readOnly = false; el.eventName.value = name; store.set(K.eventName, name);
   el.currentEvent.textContent = `Manual file · ${carDb.size} cars`; el.currentEvent.style.color = "var(--white)";
-  toast(`Manual file loaded: ${carDb.size} cars`);
+  toast(`Manual file loaded: ${carDb.size} cars. Check the event name under EVENT.`, 5000);
 }
 
 // ---------- in-app confirmation (replaces the browser's "site says…" box; works offline) ----------
@@ -369,31 +387,52 @@ function setResult(cls, main, sub, car) {
   const m = document.createElement("div"); m.textContent = main; el.result.appendChild(m);
   if (sub) { const s = document.createElement("small"); s.textContent = sub; el.result.appendChild(s); }
 }
-function checkAndLog() {
+const shortStatus = (s) => String(s || "").replace(/ \(.*/, "");
+let checking = false;   // one check at a time (a question box may be open)
+async function checkAndLog() {
+  if (checking) return;
+  checking = true;
+  try { await doCheckAndLog(); } finally { checking = false; }
+}
+async function doCheckAndLog() {
   const car = el.car.value.trim().replace(/^0+(?=\d)/, "");
   const weight = Number(el.weight.value.replace(",", "."));
   const spares = el.spares.value.trim() === "" ? 0 : Number(el.spares.value);
   if (carDb.size === 0) { toast("No entry list loaded. Tap DOWNLOAD ENTRY LISTS, then SELECT EVENT."); return; }
   if (!car) { toast("Enter the car number"); el.car.focus(); return; }
+  if (!/^\d+$/.test(car)) { toast("The car number must be digits only"); el.car.focus(); return; }
   if (!el.weight.value.trim() || !Number.isFinite(weight) || weight <= 0) { toast("Enter the scale weight"); el.weight.focus(); return; }
   if (!Number.isInteger(spares) || spares < 0) { toast("Spare tires must be a whole number"); el.spares.focus(); return; }
-  if (!carDb.has(car)) {
-    setResult("notfound", `CAR ${car} NOT ON LIST`, "Check this car by hand with the Chief of Tech");
-    navigator.vibrate?.([80, 60, 80]); return;
+  const eventName = currentEventName();
+  // typing slips: a weight no rally car has
+  if (weight < WEIGHT_MIN_KG || weight > WEIGHT_MAX_KG) {
+    if (!(await ask(`Car ${car}: scale weight ${weight} kg looks wrong (expected ${WEIGHT_MIN_KG} to ${WEIGHT_MAX_KG} kg).\n\nLog it anyway?`, "LOG IT"))) { el.weight.focus(); return; }
   }
-  const target = carDb.get(car);
-  const extraSpares = spares > 1 ? spares - 1 : 0;
-  const variance = Math.round((weight - extraSpares * SPARE_ALLOWANCE_KG - target) * 10) / 10;
-  let cls, status;
-  if (variance < 0) { cls = "red"; status = `NOT COMPLIANT (-${Math.abs(variance)} kg)`; }
-  else if (variance < WARNING_MARGIN_KG) { cls = "yellow"; status = `WARNING (Margin: +${variance} kg)`; }
-  else { cls = "green"; status = "COMPLIANT"; }
-  setResult(cls, status.replace(/ \(.*/, ""), `min ${target} kg · ${variance >= 0 ? "+" : ""}${variance} kg · scale ${weight} kg`, car);
+  // same car already weighed for this event: double tap, wrong number, or a real re-weigh
+  loadLog();
+  const prev = [...log].reverse().find((e) => e.car === car && (e.event || "") === eventName);
+  if (prev) {
+    const at = new Date(prev.time), when = isNaN(at) ? "" : " at " + at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    if (!(await ask(`Car ${car} was already logged${when}:\n${prev.raw} kg · ${shortStatus(prev.status)}\n\nLog this as a re-weigh?`, "LOG RE-WEIGH"))) { el.car.focus(); return; }
+  }
   const entry = {
-    event: el.eventName.value.trim(), location: el.location.value.trim(), car, raw: weight, spares,
-    target, status, cls, time: new Date().toISOString(),
-    id: newId(), inspector: el.inspector.value.trim(), margin: variance,
+    event: eventName, location: el.location.value.trim(), car, raw: weight, spares,
+    time: new Date().toISOString(), id: newId(), inspector: el.inspector.value.trim(),
   };
+  if (!carDb.has(car)) {
+    // not on the entry list: no minimum to check against, but the weight is still recorded
+    entry.status = "NOT ON LIST"; entry.cls = "notfound";
+    setResult("notfound", "NOT ON LIST", `scale ${weight} kg recorded · check this car by hand with the Chief of Tech`, car);
+  } else {
+    const target = carDb.get(car);
+    const extraSpares = spares > 1 ? spares - 1 : 0;
+    const variance = Math.round((weight - extraSpares * SPARE_ALLOWANCE_KG - target) * 10) / 10;
+    if (variance < 0) { entry.cls = "red"; entry.status = `NOT COMPLIANT (-${Math.abs(variance)} kg)`; }
+    else if (variance < WARNING_MARGIN_KG) { entry.cls = "yellow"; entry.status = `WARNING (Margin: +${variance} kg)`; }
+    else { entry.cls = "green"; entry.status = "COMPLIANT"; }
+    entry.target = target; entry.margin = variance;
+    setResult(entry.cls, shortStatus(entry.status), `min ${target} kg · ${variance >= 0 ? "+" : ""}${variance} kg · scale ${weight} kg`, car);
+  }
   loadLog(); log.push(entry); saveLog();
   queueUpload({ action: "log", id: entry.id, entry });
   const unexported = log.length - Number(store.get(K.exported, "0"));
@@ -401,7 +440,8 @@ function checkAndLog() {
   if (!SYNC_URL && unexported > 0 && unexported % 10 === 0) setTimeout(() => toast(`${unexported} cars not exported yet. Tap EXPORT CSV to save a copy.`, 5000), 1200);
   if (SYNC_URL && waiting >= 10 && waiting % 10 === 0) setTimeout(() => toast(`${waiting} results waiting to upload (no signal). Tap EXPORT CSV for a backup copy.`, 5000), 1200);
   el.car.value = ""; el.weight.value = ""; el.spares.value = "";
-  if (cls === "red") navigator.vibrate?.([200, 100, 200]);
+  if (entry.cls === "red") navigator.vibrate?.([200, 100, 200]);
+  if (entry.cls === "notfound") navigator.vibrate?.([80, 60, 80]);
 }
 // The phone's storage is the source of truth. Re-read it before every change, so a second copy of the
 // app (an old one frozen in the background, or a browser tab) can never overwrite cars another copy saved.
@@ -421,10 +461,10 @@ function renderLog() {
   el.logBody.innerHTML = "";
   for (const e of [...log].reverse()) {
     const tr = document.createElement("tr");
-    const cells = [e.car, e.raw, e.spares, e.target];
+    const cells = [e.car, e.raw, e.spares, e.target ?? "—"];
     for (const c of cells) { const td = document.createElement("td"); td.textContent = c; tr.appendChild(td); }
     const td = document.createElement("td"); const dot = document.createElement("span"); dot.className = "dot";
-    dot.style.background = { green: "var(--cue-green)", yellow: "var(--cue-yellow)", red: "var(--cue-red)" }[e.cls] || "var(--gray)";
+    dot.style.background = { green: "var(--cue-green)", yellow: "var(--cue-yellow)", red: "var(--cue-red)", notfound: "var(--white)" }[e.cls] || "var(--gray)";
     td.appendChild(dot); td.appendChild(document.createTextNode(e.status.replace(/ \(.*/, ""))); tr.appendChild(td);
     el.logBody.appendChild(tr);
   }
@@ -454,7 +494,7 @@ function queueUpload(item) {
   if (!SYNC_URL) return;
   const box = loadOutbox(); box.push(item); saveOutbox(box); renderSync(); syncNow();
 }
-let syncing = false;
+let syncing = false, syncFails = 0, syncProblem = "";
 async function syncNow() {
   if (!SYNC_URL || syncing || !navigator.onLine) { renderSync(); return; }
   let box = loadOutbox();
@@ -468,22 +508,35 @@ async function syncNow() {
         headers: { "Content-Type": "text/plain;charset=utf-8" },   // plain text avoids a CORS preflight
         body: JSON.stringify({ key: SYNC_KEY, version: APP_VERSION, items: batch }),
       });
-      const out = await res.json();
-      if (!out || !out.ok) throw new Error((out && out.error) || "HTTP " + res.status);
+      // a reply that isn't the sheet's own "ok" means the sheet refused it (not a signal problem)
+      let out = null; try { out = await res.json(); } catch {}
+      if (!out || !out.ok) throw Object.assign(new Error((out && out.error) || "unexpected reply"), { refused: true });
       const done = new Set(out.done || []);
+      if (!done.size) throw Object.assign(new Error("results not accepted"), { refused: true });
       // re-read in case another copy of the app added items meanwhile; remove only what the sheet confirmed
       box = loadOutbox().filter((it) => !(done.has(it.id) && batch.some((b) => b.id === it.id && b.action === it.action)));
       saveOutbox(box); store.set(K.syncedAt, new Date().toISOString());
-      if (!done.size) break;
     }
+    syncFails = 0; syncProblem = "";
   } catch (e) {
     console.warn("upload failed", e);   // stays in the outbox; tried again later
+    syncFails++;
+    const was = syncProblem;
+    // refused by the sheet: say so at once. Can't connect: only after 3 tries with signal (weak signal is normal).
+    syncProblem = e.refused ? `the results sheet refused it (${e.message})`
+      : syncFails >= 3 && navigator.onLine ? "can't reach the results sheet" : "";
+    if (syncProblem && !was) toast("Upload problem. Results are still saved on this phone. Tap EXPORT CSV for a backup copy.", 7000);
   } finally { syncing = false; renderSync(); }
 }
 function renderSync() {
   const el2 = $("syncStatus");
   if (!SYNC_URL) { el2.textContent = ""; return; }
   const n = loadOutbox().filter((it) => it.action === "log").length;
+  if (syncProblem && navigator.onLine && loadOutbox().length) {
+    el2.className = "waiting";
+    el2.textContent = (n ? `${n} result${n === 1 ? "" : "s"} NOT uploaded` : "Changes NOT uploaded") + ` · ${syncProblem} · tap EXPORT CSV`;
+    return;
+  }
   el2.className = n ? "waiting" : (log.length ? "ok" : "");
   el2.textContent = n ? `${n} result${n === 1 ? "" : "s"} waiting to upload${navigator.onLine ? (syncing ? " · uploading…" : "") : " · no signal"}`
     : loadOutbox().length ? "Uploading…"
@@ -529,9 +582,9 @@ async function restoreFromCsv(text) {
   const entries = [];
   for (const r of table.slice(1)) {
     if (r.length < 7 || !/^\d+$/.test(r[2])) continue;
-    const status = r[6], cls = /^NOT COMPLIANT/.test(status) ? "red" : /^WARNING/.test(status) ? "yellow" : /^COMPLIANT/.test(status) ? "green" : "";
+    const status = r[6], cls = /^NOT COMPLIANT/.test(status) ? "red" : /^WARNING/.test(status) ? "yellow" : /^COMPLIANT/.test(status) ? "green" : /^NOT ON LIST/.test(status) ? "notfound" : "";
     const t = r[7] ? new Date(r[7]) : new Date();
-    entries.push({ event: r[0], location: r[1], car: r[2], raw: Number(r[3]), spares: Number(r[4]), target: Number(r[5]),
+    entries.push({ event: r[0], location: r[1], car: r[2], raw: Number(r[3]), spares: Number(r[4]), target: r[5] === "" ? undefined : Number(r[5]),
       status, cls, time: isNaN(t) ? new Date().toISOString() : t.toISOString(), inspector: r[8] || "", id: newId(), restored: true });
   }
   if (!entries.length) { toast("No logged cars found in that file."); return; }
@@ -612,13 +665,13 @@ function restore() {
     carDb = new Map(manual.pairs); el.eventSelect.classList.add("loaded");
     el.currentEvent.textContent = `Manual file · ${carDb.size} cars`; el.currentEvent.style.color = "var(--white)";
   } else if (saved) selectEvent(saved, { quiet: true });
-  const en = store.get(K.eventName); if (en) el.eventName.value = en;
+  const en = store.get(K.eventName); if (en && !store.get(K.event)) el.eventName.value = en;   // typed name only for a manual file
   const loc = store.get(K.location); if (loc) el.location.value = loc;
   const insp = store.get(K.inspector); if (insp) el.inspector.value = insp;
   renderLog(); renderSync();
   installHint();
   const net = () => document.body.classList.toggle("is-offline", !navigator.onLine);
-  addEventListener("online", () => { net(); syncNow(); }); addEventListener("offline", () => { net(); renderSync(); }); net();
+  addEventListener("online", () => { net(); syncNow(); }); addEventListener("offline", () => { net(); syncFails = 0; syncProblem = ""; renderSync(); }); net();
   syncNow(); setInterval(() => { if (loadOutbox().length) syncNow(); }, 60000);
   navigator.storage?.persist?.().catch(() => {});
 }
@@ -642,10 +695,13 @@ $("gpsBtn").addEventListener("click", gps);
 $("manualBtn").addEventListener("click", () => $("fileInput").click());
 $("fileInput").addEventListener("change", async (e) => {
   const f = e.target.files[0]; if (!f) return;
-  loadManual(await f.text(), f.name); e.target.value = "";
+  await loadManual(await f.text(), f.name); e.target.value = "";
 });
-el.eventSelect.addEventListener("change", () => {
-  if (el.eventSelect.value) { if (selectEvent(el.eventSelect.value)) toast(`${el.eventSelect.value}: ${carDb.size} cars loaded`); }
+el.eventSelect.addEventListener("change", async () => {
+  const name = el.eventSelect.value;
+  if (!name) return;
+  if (name !== store.get(K.event) && !(await okToSwitch(name))) { el.eventSelect.value = store.get(K.event) || ""; return; }
+  if (selectEvent(name)) toast(`${name}: ${carDb.size} cars loaded`);
 });
 el.eventName.addEventListener("input", () => store.set(K.eventName, el.eventName.value));
 el.location.addEventListener("input", () => store.set(K.location, el.location.value));
