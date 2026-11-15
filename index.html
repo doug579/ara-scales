@@ -199,7 +199,7 @@ footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2
 
 <script>
 "use strict";
-const APP_VERSION = "1.3.1";
+const APP_VERSION = "1.4.0";
 // Results upload (Google Apps Script web app on the "ARA Scales Results" sheet). Empty = upload off.
 const SYNC_URL = "https://script.google.com/macros/s/AKfycbxD2KTATyKE-RFp7AO-Vr4Wjqt_yTKUuuQjNrsJoGOXF69lr8Ow3SdrYFbcBuA_ZbTqmg/exec";
 const SYNC_KEY = "ara-Wr7anc-eLnj3NmARg3vUutPP";
@@ -324,7 +324,7 @@ function showListAge() {
   const at = store.get(K.listsAt);
   if (!at) { el.listAge.textContent = ""; return; }
   const d = new Date(at);
-  el.listAge.textContent = "Entry lists downloaded " + d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  el.listAge.textContent = "Entry lists up to date as of " + d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 // ---------- download ----------
@@ -345,6 +345,40 @@ async function download() {
   } catch (e) {
     toast(navigator.onLine ? `Download failed (${e.message}). Your saved list is still loaded.` : "No signal. Your saved list is still loaded.", 4500);
   } finally { btn.disabled = false; btn.textContent = "DOWNLOAD ENTRY LISTS"; }
+}
+
+// ---------- automatic refresh: whenever the app opens or comes back to the front with signal ----------
+// Quiet unless the selected event's list actually changed. Never clears the selected event or a manual file:
+// if the selected event is no longer on the sheet (it drops off a couple of days after the event), the saved
+// list is kept as it is so the inspector can still finish up and export.
+let autoAt = 0, autoBusy = false;
+async function autoRefresh() {
+  if (autoBusy || !navigator.onLine || Date.now() - autoAt < 5 * 60 * 1000) return;
+  if ($("downloadBtn").disabled) return;   // a manual download is running
+  autoBusy = true; autoAt = Date.now();
+  try {
+    const res = await fetch(LIST_URL + "&t=" + Date.now(), { cache: "no-store", credentials: "omit" });
+    if (!res.ok) return;
+    const text = await res.text();
+    const parsed = loadListsText(text);
+    if (!parsed.length) return;
+    const saved = store.get(K.event);
+    if (saved && !parsed.some((r) => r.event === saved)) return;
+    if (text !== store.get(K.lists)) {
+      const key = (list) => JSON.stringify(list.filter((r) => r.event === saved).map((r) => [r.car, r.kg]));
+      const before = saved ? key(rows) : "", hadLists = rows.length > 0, names = eventNames().map(([n]) => n).join("|");
+      rows = parsed; store.set(K.lists, text);
+      const manual = !!store.get(K.manual);
+      fillPicker();
+      if (saved) { selectEvent(saved, { quiet: true }); if (key(rows) !== before) toast(`Entry list updated: ${saved} · ${carDb.size} cars`, 5000); }
+      else {
+        if (manual) el.eventSelect.classList.add("loaded");
+        if (!hadLists) toast(`Entry lists loaded. Now SELECT EVENT.`, 5000);
+        else if (eventNames().map(([n]) => n).join("|") !== names) toast("Entry lists updated", 3000);
+      }
+    }
+    store.set(K.listsAt, new Date().toISOString()); showListAge();
+  } catch {} finally { autoBusy = false; }
 }
 
 // ---------- manual file (backup) ----------
@@ -673,9 +707,10 @@ function restore() {
   renderLog(); renderSync();
   installHint();
   const net = () => document.body.classList.toggle("is-offline", !navigator.onLine);
-  addEventListener("online", () => { net(); syncNow(); }); addEventListener("offline", () => { net(); syncFails = 0; syncProblem = ""; renderSync(); }); net();
+  addEventListener("online", () => { net(); syncNow(); autoRefresh(); }); addEventListener("offline", () => { net(); syncFails = 0; syncProblem = ""; renderSync(); }); net();
   syncNow(); setInterval(() => { if (loadOutbox().length) syncNow(); }, 60000);
   navigator.storage?.persist?.().catch(() => {});
+  autoRefresh();
 }
 
 // ---------- wire up ----------
@@ -689,7 +724,7 @@ $("restoreInput").addEventListener("change", async (e) => {
   await restoreFromCsv(await f.text()); e.target.value = "";
 });
 // refresh from the phone's storage whenever the app comes back to the front or another copy changes it
-document.addEventListener("visibilitychange", () => { if (!document.hidden) { loadLog(); renderLog(); syncNow(); } });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { loadLog(); renderLog(); syncNow(); autoRefresh(); } });
 addEventListener("pageshow", () => { loadLog(); renderLog(); });
 addEventListener("storage", (e) => { if (e.key === K.log || e.key === K.exported) { loadLog(); renderLog(); } });
 $("downloadBtn").addEventListener("click", download);
